@@ -1,0 +1,26 @@
+# kind cluster configuration for VoyageAI
+# Creates a single-node cluster with port mappings for the Nginx Ingress Controller.
+#
+# Usage:
+#   kind create cluster --name voyageai --config k8s/kind-config.yaml
+#
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      # Label the node so the Nginx Ingress Controller can target it
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      # HTTP  -> Ingress Controller
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      # HTTPS -> Ingress Controller
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP

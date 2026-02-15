@@ -1,0 +1,94 @@
+# =============================================================================
+# Java Backend (Spring Boot) — Deployment + ClusterIP Service
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: java-backend
+  namespace: voyageai
+  labels:
+    app: java-backend
+    app.kubernetes.io/part-of: voyageai
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: java-backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: java-backend
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: java-backend
+          image: voyageai/java-backend:latest
+          imagePullPolicy: Never          # kind: images pre-loaded
+          ports:
+            - containerPort: 8081
+          # --- Environment ---
+          envFrom:
+            - configMapRef:
+                name: voyageai-config
+            - secretRef:
+                name: voyageai-secrets
+          env:
+            # Override individual keys that need special handling
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: voyageai-secrets
+                  key: SPRING_DATASOURCE_PASSWORD
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: voyageai-secrets
+                  key: OPENAI_API_KEY
+          # --- Resources ---
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          # --- Probes ---
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            failureThreshold: 24        # up to 2 min for cold JVM start
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8081
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8081
+            periodSeconds: 10
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: java-backend
+  namespace: voyageai
+  labels:
+    app: java-backend
+spec:
+  selector:
+    app: java-backend
+  ports:
+    - port: 8081
+      targetPort: 8081
+  type: ClusterIP

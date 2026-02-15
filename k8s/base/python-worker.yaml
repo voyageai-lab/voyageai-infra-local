@@ -1,0 +1,63 @@
+# =============================================================================
+# Python Worker (Kafka consumer) — Deployment (no Service, no HTTP port)
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-worker
+  namespace: voyageai
+  labels:
+    app: python-worker
+    app.kubernetes.io/part-of: voyageai
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: python-worker
+  template:
+    metadata:
+      labels:
+        app: python-worker
+    spec:
+      terminationGracePeriodSeconds: 60    # allow in-flight tasks to finish
+      containers:
+        - name: python-worker
+          image: voyageai/python-worker:latest
+          imagePullPolicy: Never
+          envFrom:
+            - configMapRef:
+                name: voyageai-config
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: voyageai-secrets
+                  key: OPENAI_API_KEY
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          # Worker has no HTTP server — use exec probe against Redis
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import redis; r = redis.from_url('redis://redis:6379/0', socket_timeout=2); r.ping()"
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import redis; r = redis.from_url('redis://redis:6379/0', socket_timeout=2); r.ping()"
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3

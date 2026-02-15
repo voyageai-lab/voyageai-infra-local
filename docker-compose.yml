@@ -1,0 +1,237 @@
+# VoyageAI Full Stack - Docker Compose
+# Usage: docker-compose up -d
+#
+# Services:
+#   - frontend:       React app served by Nginx (port 3000)
+#   - java-backend:   Spring Boot API (port 8081)
+#   - python-service: FastAPI AI service (port 8000)
+#   - python-worker:  Kafka consumer worker
+#   - kafka:          Kafka broker in KRaft mode (port 9092)
+#   - redis:          Redis cache (port 6379)
+#   - mongodb:        MongoDB document store (port 27017)
+#   - mysql:          MySQL relational DB (port 3306)
+
+services:
+  # ============================================================
+  # Infrastructure Services
+  # ============================================================
+
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: voyageai-kafka
+    ports:
+      # Bind to localhost only to prevent external access (security fix)
+      # Use EXTERNAL listener (9092) for host-local dev; INTERNAL (29092) for Docker-internal
+      - "127.0.0.1:9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      # Dual listeners: INTERNAL for Docker containers, EXTERNAL for host-local dev
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Reject oversized requests from scanners/bots (default 100MB, lower to 10MB)
+      KAFKA_SOCKET_REQUEST_MAX_BYTES: 10485760
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - kafka-data:/tmp/kraft-combined-logs
+
+  redis:
+    image: redis:7-alpine
+    container_name: voyageai-redis
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    volumes:
+      - redis-data:/data
+
+  mongodb:
+    image: mongo:6
+    container_name: voyageai-mongodb
+    ports:
+      - "127.0.0.1:27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: voyageai
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    volumes:
+      - mongo-data:/data/db
+
+  mysql:
+    image: mysql:8.0
+    container_name: voyageai-mysql
+    ports:
+      - "127.0.0.1:3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-voyageai123}
+      MYSQL_DATABASE: voyageai
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  # ============================================================
+  # Application Services
+  # ============================================================
+
+  java-backend:
+    build:
+      context: ../voyageai-backend
+      dockerfile: Dockerfile
+    container_name: voyageai-java
+    ports:
+      - "8081:8081"
+    environment:
+      # Database
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/voyageai?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_ROOT_PASSWORD:-voyageai123}
+      # Redis
+      SPRING_DATA_REDIS_HOST: redis
+      # MongoDB
+      SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/voyageai
+      SPRING_DATA_MONGODB_DATABASE: voyageai
+      # Kafka (use INTERNAL listener for Docker-internal communication)
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      # JWT
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-for-development-only-change-in-prod}
+      # OpenAI
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Planning mode
+      PLANNING_MODE: kafka
+      # Frontend URL for CORS and OAuth redirect
+      FRONTEND_URL: http://localhost:3000
+      # Override application.properties frontend.url for Docker
+      SPRING_APPLICATION_JSON: '{"frontend.url":"http://localhost:3000"}'
+      # Actuator
+      SPRING_PROFILES_ACTIVE: production
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  python-service:
+    build:
+      context: ../voyageai-python-service
+      dockerfile: Dockerfile
+    container_name: voyageai-python
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      REDIS_URL: redis://redis:6379/0
+      MONGODB_URI: mongodb://mongodb:27017
+      MONGODB_DATABASE: voyageai
+      # Foursquare Places API (free tier, no credit card needed)
+      FOURSQUARE_API_KEY: ${FOURSQUARE_API_KEY:-}
+      # Amadeus Flight/Hotel API (free test environment)
+      AMADEUS_API_KEY: ${AMADEUS_API_KEY:-}
+      AMADEUS_API_SECRET: ${AMADEUS_API_SECRET:-}
+      # Google Maps API (Places, Directions, Geocoding)
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      DEBUG: "false"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+
+  python-worker:
+    build:
+      context: ../voyageai-python-service
+      dockerfile: Dockerfile.worker
+    container_name: voyageai-worker
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      REDIS_URL: redis://redis:6379/0
+      MONGODB_URI: mongodb://mongodb:27017
+      MONGODB_DATABASE: voyageai
+      # Foursquare Places API (free tier, no credit card needed)
+      FOURSQUARE_API_KEY: ${FOURSQUARE_API_KEY:-}
+      # Amadeus Flight/Hotel API (free test environment)
+      AMADEUS_API_KEY: ${AMADEUS_API_KEY:-}
+      AMADEUS_API_SECRET: ${AMADEUS_API_SECRET:-}
+      # Google Maps API (Places, Directions, Geocoding)
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      # MCP Servers (Google Maps via Streamable HTTP)
+      MCP_SERVERS: googlemaps
+      MCP_SERVER_googlemaps_TRANSPORT: http
+      MCP_SERVER_googlemaps_URL: http://mcp-googlemaps:8080/mcp
+      MCP_SERVER_googlemaps_DESCRIPTION: Google Maps places search and directions via MCP
+      DEBUG: "false"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      mcp-googlemaps:
+        condition: service_healthy
+
+  # ============================================================
+  # MCP (Model Context Protocol) Servers
+  # ============================================================
+
+  mcp-googlemaps:
+    build:
+      context: ../voyageai-python-service
+      dockerfile: Dockerfile.mcp
+    container_name: voyageai-mcp-googlemaps
+    environment:
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      MCP_PORT: "8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('localhost',8080),2); s.close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ../voyageai-web
+      dockerfile: Dockerfile
+    container_name: voyageai-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - java-backend
+
+volumes:
+  kafka-data:
+  redis-data:
+  mongo-data:
+  mysql-data:

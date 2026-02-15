@@ -1,0 +1,72 @@
+# =============================================================================
+# Nginx Ingress — routes traffic to frontend & java-backend
+# =============================================================================
+# Prerequisites:
+#   The Nginx Ingress Controller for kind must be installed first.
+#   See k8s/deploy-kind.sh for the install command.
+#
+# After applying, add this to /etc/hosts:
+#   127.0.0.1  voyageai.local
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: voyageai-ingress
+  namespace: voyageai
+  labels:
+    app.kubernetes.io/part-of: voyageai
+  annotations:
+    # --- SSE / long-poll support ---
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    # --- WebSocket upgrade (future-proof) ---
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    # --- Body size (for large itinerary payloads) ---
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: voyageai.local
+      http:
+        paths:
+          # Java Backend — REST API
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: java-backend
+                port:
+                  number: 8081
+          # Java Backend — OAuth2 callback
+          - path: /oauth2
+            pathType: Prefix
+            backend:
+              service:
+                name: java-backend
+                port:
+                  number: 8081
+          # Java Backend — OAuth2 login redirect
+          - path: /login/oauth2
+            pathType: Prefix
+            backend:
+              service:
+                name: java-backend
+                port:
+                  number: 8081
+          # Java Backend — Actuator (health, metrics)
+          - path: /actuator
+            pathType: Prefix
+            backend:
+              service:
+                name: java-backend
+                port:
+                  number: 8081
+          # Frontend — catch-all (must be LAST)
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

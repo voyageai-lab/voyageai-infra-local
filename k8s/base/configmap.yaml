@@ -1,0 +1,36 @@
+# =============================================================================
+# VoyageAI ConfigMap  (shared by all application pods)
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: voyageai-config
+  namespace: voyageai
+  labels:
+    app.kubernetes.io/part-of: voyageai
+data:
+  # =============================================
+  # Java Backend (Spring Boot)
+  # =============================================
+  SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/voyageai?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true"
+  SPRING_DATA_REDIS_HOST: "redis"
+  SPRING_DATA_REDIS_PORT: "6379"
+  SPRING_DATA_MONGODB_URI: "mongodb://mongodb:27017/voyageai"
+  SPRING_DATA_MONGODB_DATABASE: "voyageai"
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+  SPRING_PROFILES_ACTIVE: "production"
+  PLANNING_MODE: "kafka"
+  FRONTEND_URL: "http://voyageai.local"
+  # SSE timeout must exceed the longest pipeline run (~120 s)
+  SSE_TIMEOUT_SECONDS: "300"
+  # Embed frontend URL into Spring JSON overlay (used by CorsConfig etc.)
+  SPRING_APPLICATION_JSON: '{"frontend.url":"http://voyageai.local","sse.timeout.seconds":300}'
+
+  # =============================================
+  # Python Service & Worker
+  # =============================================
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+  REDIS_URL: "redis://redis:6379/0"
+  MONGODB_URI: "mongodb://mongodb:27017"
+  MONGODB_DATABASE: "voyageai"
+  DEBUG: "false"
